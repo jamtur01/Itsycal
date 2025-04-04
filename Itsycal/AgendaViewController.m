@@ -583,8 +583,41 @@ static NSString *kEventCellIdentifier = @"EventCell";
     cell.btnVideo.hidden = info.zoomURL ? NO : YES;
     cell.btnVideo.actionBlock = nil;
     cell.btnVideo.contentTintColor = nil;
+    
+    // Clear any previous delegate to avoid memory issues
+    if (cell.titleTextField.delegate) {
+        cell.titleTextField.delegate = nil;
+    }
 
-    cell.titleTextField.stringValue = title;
+    // Add the video camera icon to the title and make it clickable if there's a zoom URL
+    if (info.zoomURL) {
+        NSMutableAttributedString *attributedTitle = [[NSMutableAttributedString alloc] initWithString:title];
+        
+        // Create an attachment with the video camera image
+        NSTextAttachment *cameraAttachment = [[NSTextAttachment alloc] init];
+        NSImage *cameraImage = [NSImage imageNamed:@"video16"];
+        cameraAttachment.image = cameraImage;
+        
+        // Add space before the camera icon
+        [attributedTitle appendAttributedString:[[NSAttributedString alloc] initWithString:@" "]];
+        
+        // Get the position where the image will be inserted
+        NSUInteger attachmentPosition = attributedTitle.length;
+        
+        // Append the camera icon as an attachment
+        NSAttributedString *cameraIcon = [NSAttributedString attributedStringWithAttachment:cameraAttachment];
+        [attributedTitle appendAttributedString:cameraIcon];
+        
+        // Make the camera icon clickable with the meeting URL
+        NSRange cameraRange = NSMakeRange(attachmentPosition, 1);
+        [attributedTitle addAttribute:NSLinkAttributeName value:info.zoomURL.absoluteString range:cameraRange];
+        
+        cell.titleTextField.allowsEditingTextAttributes = YES;
+        cell.titleTextField.selectable = YES;
+        cell.titleTextField.attributedStringValue = attributedTitle;
+    } else {
+        cell.titleTextField.stringValue = title;
+    }
     cell.titleTextField.textColor = Theme.agendaEventTextColor;
     cell.locationTextField.stringValue = location;
     cell.locationTextField.textColor = Theme.agendaEventDateTextColor;
@@ -599,6 +632,11 @@ static NSString *kEventCellIdentifier = @"EventCell";
         && [NSDate.date compare:info.event.endDate] == NSOrderedDescending) {
         cell.titleTextField.textColor = Theme.agendaEventDateTextColor;
         cell.dim = YES;
+    }
+    
+    // Set the delegate for handling link clicks
+    if (info.zoomURL) {
+        cell.titleTextField.delegate = self;
     }
     
     // Enable the zoom button 15 minutes prior to event start until end.
@@ -693,6 +731,21 @@ static NSString *kEventCellIdentifier = @"EventCell";
         }
     }
     return NO;
+}
+
+#pragma mark -
+#pragma mark NSTextFieldDelegate
+
+- (BOOL)textField:(NSTextField *)textField shouldClickLinkChar:(unichar)linkChar
+       textView:(NSTextView *)textView
+       charIndex:(NSUInteger)charIndex
+         atPoint:(NSPoint)aPoint
+         forURL:(NSURL *)url
+{
+    if (url) {
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+    return NO; // Prevent the default action
 }
 
 @end
@@ -995,6 +1048,9 @@ static NSString *kEventCellIdentifier = @"EventCell";
 // AgendaPopoverVC
 // =========================================================================
 
+@interface AgendaPopoverVC () <NSTextFieldDelegate>
+@end
+
 #define POPOVER_TEXT_WIDTH 280
 
 @implementation AgendaPopoverVC
@@ -1043,7 +1099,13 @@ static NSString *kEventCellIdentifier = @"EventCell";
     };
     self = [super init];
     if (self) {
+        // Set up link handling
+        [[NSWorkspace sharedWorkspace] notificationCenter];
+        // Create title label with link handling capabilities
         _title = label();
+        _title.allowsEditingTextAttributes = YES;
+        _title.selectable = YES;
+        
         _duration = label();
         _recurrence = label();
         
@@ -1104,6 +1166,13 @@ static NSString *kEventCellIdentifier = @"EventCell";
         _noteHeight.active = YES;
         _URLHeight = [_URL.heightAnchor constraintEqualToConstant:100];
         _URLHeight.active = YES;
+        // Set up text field links to be clickable
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                  selector:@selector(handleLinkClick:)
+                                                      name:@"NSTextViewDidClickLinkNotification"
+                                                    object:nil];
+        // Set title field as its own delegate to handle link clicks
+        _title.delegate = self;
     }
     return self;
 }
@@ -1163,6 +1232,34 @@ static NSString *kEventCellIdentifier = @"EventCell";
     
     if (info && info.event) {
         if (info.event.title) title = info.event.title;
+    }
+    
+    // Create attributed string for title if there's a zoom URL
+    if (info.zoomURL) {
+        NSMutableAttributedString *attributedTitle = [[NSMutableAttributedString alloc] initWithString:title];
+        
+        // Create an attachment with the video camera image
+        NSTextAttachment *cameraAttachment = [[NSTextAttachment alloc] init];
+        NSImage *cameraImage = [NSImage imageNamed:@"video16"];
+        cameraAttachment.image = cameraImage;
+        
+        // Add space before the camera icon
+        [attributedTitle appendAttributedString:[[NSAttributedString alloc] initWithString:@" "]];
+        
+        // Get the position where the image will be inserted
+        NSUInteger attachmentPosition = attributedTitle.length;
+        
+        // Append the camera icon as an attachment
+        NSAttributedString *cameraIcon = [NSAttributedString attributedStringWithAttachment:cameraAttachment];
+        [attributedTitle appendAttributedString:cameraIcon];
+        
+        // Make the camera icon clickable with the meeting URL
+        NSRange cameraRange = NSMakeRange(attachmentPosition, 1);
+        [attributedTitle addAttribute:NSLinkAttributeName value:info.zoomURL.absoluteString range:cameraRange];
+        
+        _title.attributedStringValue = attributedTitle;
+    } else {
+        _title.stringValue = title;
     }
     
     // Hide location row IF there's no location string.
@@ -1380,7 +1477,10 @@ static NSString *kEventCellIdentifier = @"EventCell";
         [self populateTextView:_URL withString:absURL heightConstraint:_URLHeight];
     }
     
-    _title.stringValue = title;
+    // Only set the plain string value if we're not using an attributed string (no zoom URL)
+    if (!info.zoomURL) {
+        _title.stringValue = title;
+    }
     _duration.stringValue = duration;
     _recurrence.stringValue = recurrence;
     
@@ -1445,6 +1545,19 @@ static NSString *kEventCellIdentifier = @"EventCell";
     (void) [textView.layoutManager glyphRangeForTextContainer:textView.textContainer];
     NSRect textRect = [textView.layoutManager usedRectForTextContainer:textView.textContainer];
     constraint.constant = textRect.size.height;
+}
+
+- (void)handleLinkClick:(NSNotification *)notification
+{
+    NSURL *clickedURL = notification.userInfo[@"URL"];
+    if (clickedURL) {
+        [[NSWorkspace sharedWorkspace] openURL:clickedURL];
+    }
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 @end
