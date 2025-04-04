@@ -107,6 +107,17 @@
     [vfl :@"H:|-8-[_btnAdd]-(>=0)-[_btnPin]-6-[_btnCal]-6-[_btnOpt]-8-|" :NSLayoutFormatAlignAllCenterY];
     [vfl :@"V:|[_btnOpt(22)]-1-[agenda]-(-1)-|"];
     
+    // Set a fixed width constraint to make the dropdown wider
+    // Reduced by 20% from our previous setting of 560 points
+    NSLayoutConstraint *widthConstraint = [NSLayoutConstraint constraintWithItem:v
+                                                                       attribute:NSLayoutAttributeWidth
+                                                                       relatedBy:NSLayoutRelationEqual
+                                                                          toItem:nil
+                                                                       attribute:NSLayoutAttributeNotAnAttribute
+                                                                      multiplier:1.0
+                                                                        constant:448];
+    [v addConstraint:widthConstraint];
+    
     self.view = v;
 }
 
@@ -275,6 +286,17 @@
     
     _newEventPopover.contentViewController = eventVC;
     _newEventPopover.appearance = NSApp.effectiveAppearance;
+    
+    // Get the default size and double the width
+    NSSize currentSize = eventVC.preferredContentSize;
+    if (NSEqualSizes(currentSize, NSZeroSize)) {
+        // If no preferred size is set, use a reasonable default and double it
+        currentSize = NSMakeSize(300, 400);
+    }
+    NSSize newSize = NSMakeSize(currentSize.width * 2, currentSize.height);
+    _newEventPopover.contentSize = newSize;
+    eventVC.preferredContentSize = newSize;
+    
     [_newEventPopover showRelativeToRect:_btnAdd.bounds ofView:_btnAdd preferredEdge:NSRectEdgeMinX];
 }
 
