@@ -39,6 +39,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 @property (nonatomic) MoButton *btnVideo;
 @property (nonatomic, weak) EventInfo *eventInfo;
 @property (nonatomic) BOOL dim;
+@property (nonatomic) BOOL isFirstActiveEvent;
 @end
 
 @interface AgendaPopoverVC : NSViewController
@@ -170,6 +171,9 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)reloadData
 {
+    // Mark the first active event before reloading
+    [self markFirstActiveEvent];
+    
     [_tv reloadData];
     [_tv scrollRowToVisible:0];
     [[_tv enclosingScrollView] flashScrollers];
@@ -512,6 +516,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
     if (!info.event) {
         cell.eventInfo = nil;
         cell.dim = YES;
+        cell.isFirstActiveEvent = NO;
         cell.titleTextField.stringValue = NSLocalizedString(@"", @"");
         cell.titleTextField.textColor = NSColor.tertiaryLabelColor;
         [cell.grid rowAtIndex:1].hidden = YES; // hide location row
@@ -588,6 +593,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
     // If event's endDate is today and is past, dim event.
     cell.dim = NO;
+    cell.isFirstActiveEvent = NO;
     if (!info.isStartDate && !info.isAllDay
         && [self.nsCal isDateInToday:info.event.endDate]
         && [NSDate.date compare:info.event.endDate] == NSOrderedDescending) {
@@ -619,8 +625,55 @@ static NSString *kEventCellIdentifier = @"EventCell";
     // This will redraw the events, dimming if necessary.
     // This also enables/disables zoom buttons if necessary
     // depending on whether a virtual meeting is in progress.
+    // This will also update the position of the current event line marker.
     if (self.view.window.isVisible) {
+        // Identify the first active event before reloading
+        [self markFirstActiveEvent];
         [_tv reloadData];
+    }
+}
+
+- (void)markFirstActiveEvent
+{
+    NSDate *now = [NSDate date];
+    BOOL foundFirstActive = NO;
+    
+    // Loop through events to find the first active one
+    for (NSInteger row = 0; row < [_tv numberOfRows]; row++) {
+        // Skip date header rows and empty rows
+        if ([self tableView:_tv isGroupRow:row] || [self tableView:_tv isEmptyEventRow:row]) {
+            continue;
+        }
+        
+        AgendaEventCell *cell = [_tv viewAtColumn:0 row:row makeIfNecessary:NO];
+        if (!cell || ![cell isKindOfClass:[AgendaEventCell class]]) {
+            continue;
+        }
+        
+        EventInfo *info = cell.eventInfo;
+        if (!info || !info.event) {
+            continue;
+        }
+        
+        // If event is happening now or in the future, it's active
+        BOOL isPastEvent = NO;
+        
+        // For all-day events, check if today is past the end date
+        if (info.isAllDay) {
+            isPastEvent = [self.nsCal isDateInToday:info.event.endDate] &&
+                         [now compare:info.event.endDate] == NSOrderedDescending;
+        }
+        // For regular events, check if we're past the end time
+        else {
+            isPastEvent = [now compare:info.event.endDate] == NSOrderedDescending;
+        }
+        
+        if (!isPastEvent && !foundFirstActive) {
+            cell.isFirstActiveEvent = YES;
+            foundFirstActive = YES;
+        } else {
+            cell.isFirstActiveEvent = NO;
+        }
     }
 }
 
@@ -872,7 +925,6 @@ static NSString *kEventCellIdentifier = @"EventCell";
     }
     return patternImage;
 }
-
 - (void)drawRect:(NSRect)dirtyRect
 {
     // There are no events on this date. Draw a dash.
@@ -886,6 +938,17 @@ static NSString *kEventCellIdentifier = @"EventCell";
                                          xRadius:radius
                                          yRadius:radius] fill];
         return;
+    }
+    
+    // Draw a line at the top of the cell if this is the first active event
+    if (self.isFirstActiveEvent) {
+        NSColor *lineColor = [NSColor colorWithCalibratedRed:0.0 green:0.5 blue:1.0 alpha:0.8];
+        [lineColor set];
+        
+        // Draw the line across the full width of the cell
+        NSRect lineRect = NSMakeRect(8, NSHeight(self.bounds) - 1, NSWidth(self.bounds) - 16, 2);
+        NSBezierPath *linePath = [NSBezierPath bezierPathWithRoundedRect:lineRect xRadius:1 yRadius:1];
+        [linePath fill];
     }
 
     // Draw a pattern background for events that are pending

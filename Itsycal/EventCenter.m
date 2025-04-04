@@ -393,6 +393,38 @@ static NSString *kSelectedCalendars = @"SelectedCalendars";
     void (^GetZoomURL)(NSString*) = ^(NSString *text) {
         [linkDetector enumerateMatchesInString:text options:kNilOptions range:NSMakeRange(0, text.length) usingBlock:^(NSTextCheckingResult * _Nullable result, NSMatchingFlags flags, BOOL * _Nonnull stop) {
             NSString *link = result.URL.absoluteString;
+            // Check for Microsoft SafeLinks wrapped URLs containing Teams links
+            if ([link containsString:@"safelinks.protection.outlook.com"] &&
+                [link containsString:@"url="]) {
+                // Extract the URL parameter
+                NSRange urlRange = [link rangeOfString:@"url="];
+                if (urlRange.location != NSNotFound) {
+                    NSString *encodedURL = [link substringFromIndex:urlRange.location + urlRange.length];
+                    // Cut off at the first &, if present
+                    NSRange ampersandRange = [encodedURL rangeOfString:@"&"];
+                    if (ampersandRange.location != NSNotFound) {
+                        encodedURL = [encodedURL substringToIndex:ampersandRange.location];
+                    }
+                    // URL decode
+                    NSString *decodedURL = [encodedURL stringByRemovingPercentEncoding];
+                    if (decodedURL && [decodedURL containsString:@"teams.microsoft.com/l/meetup-join/"]) {
+                        // We found a Teams link inside the SafeLinks wrapper
+                        NSURL *teamsURL = [NSURL URLWithString:decodedURL];
+                        if (teamsURL) {
+                            info.zoomURL = teamsURL;
+                            // Test if user has the Teams app and, if so, create a Teams app link
+                            if ([NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"msteams://"]]) {
+                                NSString *appLink = [decodedURL stringByReplacingOccurrencesOfString:@"https://" withString:@"msteams://"];
+                                NSURL *teamsAppURL = [NSURL URLWithString:appLink];
+                                if (teamsAppURL) info.zoomURL = teamsAppURL;
+                            }
+                            *stop = YES;
+                            return;
+                        }
+                    }
+                }
+            }
+            
             if (   [link containsString:@"zoom.us/j/"]
                 || [link containsString:@"zoom.us/s/"]
                 || [link containsString:@"zoom.us/w/"]
