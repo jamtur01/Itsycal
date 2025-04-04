@@ -9,9 +9,9 @@ extern NSString * const kSizePreference;
 // Notification name
 extern NSString * const kSizeDidChangeNotification;
 
-#define FONT_SIZE_SMALL 11
-#define FONT_SIZE_MEDIUM 13
-#define FONT_SIZE_LARGE 15
+#define FONT_SIZE_SMALL 14
+#define FONT_SIZE_MEDIUM 16
+#define FONT_SIZE_LARGE 18
 
 // Convenience macro for notification observer for sizeable components
 #define REGISTER_FOR_SIZE_CHANGE [[NSNotificationCenter defaultCenter] \
