@@ -69,7 +69,7 @@
     _moCal.delegate = self;
     _moCal.target = self;
     _moCal.doubleAction = @selector(addCalendarEvent:);
-    [v addSubview:_moCal];
+    // Calendar view is initialized but not added to view hierarchy to remove it from the UI
     
     // Convenience function to config buttons.
     MoButton* (^btn)(NSString*, NSString*, NSString*, SEL) = ^MoButton* (NSString *imageName, NSString *tip, NSString *key, SEL action) {
@@ -102,10 +102,10 @@
 
     // Constraints
     MoVFLHelper *vfl = [[MoVFLHelper alloc] initWithSuperview:v metrics:nil views:NSDictionaryOfVariableBindings(_moCal, _btnAdd, _btnCal, _btnOpt, _btnPin, agenda)];
-    [vfl :@"H:|-2-[_moCal]-2-|"];
+    // Calendar horizontal constraint removed as it's no longer in the view hierarchy
     [vfl :@"H:|[agenda]|"];
     [vfl :@"H:|-8-[_btnAdd]-(>=0)-[_btnPin]-6-[_btnCal]-6-[_btnOpt]-8-|" :NSLayoutFormatAlignAllCenterY];
-    [vfl :@"V:|[_moCal]-6-[_btnOpt(22)]-1-[agenda]-(-1)-|"];
+    [vfl :@"V:|[_btnOpt(22)]-1-[agenda]-(-1)-|"];
     
     self.view = v;
 }
@@ -1002,7 +1002,8 @@
 
 - (CGFloat)agendaMaxPossibleHeight
 {
-    return NSHeight(_screenFrame) - NSHeight(_moCal.frame) - 140;
+    // Removed adjustment for calendar height since it's no longer displayed
+    return NSHeight(_screenFrame) - 140;
 }
 
 #pragma mark -
