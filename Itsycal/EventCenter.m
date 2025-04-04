@@ -357,6 +357,14 @@ static NSString *kSelectedCalendars = @"SelectedCalendars";
     NSArray *selectedCalendars = [[NSUserDefaults standardUserDefaults] arrayForKey:kSelectedCalendars];
     for (NSDate *date in _eventsForDate) {
         for (EventInfo *info in _eventsForDate[date]) {
+            // Skip events with "(Clone)" in the title
+            if ([info.event.title containsString:@"(Clone)"]) {
+                continue;
+            }
+            // Skip events where the title is exactly "Busy"
+            if ([info.event.title isEqualToString:@"Busy"]) {
+                continue;
+            }
             if ([selectedCalendars containsObject:info.event.calendar.calendarIdentifier]) {
                 if (filteredEventsForDate[date] == nil) {
                     filteredEventsForDate[date] = [NSMutableArray new];
