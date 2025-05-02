@@ -482,21 +482,30 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (NSString *)DOWStringForDate:(NSDate *)date
 {
-    static NSDateFormatter *dateFormatter = nil;
-    if (dateFormatter == nil) {
-        dateFormatter = [NSDateFormatter new];
+    static NSDateFormatter *dowFormatter = nil;
+    static NSDateFormatter *fullFormatter = nil;
+    if (dowFormatter == nil) {
+        dowFormatter = [NSDateFormatter new];
+        [dowFormatter setLocalizedDateFormatFromTemplate:@"EEEE"];
     }
-    dateFormatter.timeZone = [NSTimeZone localTimeZone];
-    if ([self.nsCal isDateInToday:date] || [self.nsCal isDateInTomorrow:date]) {
-        dateFormatter.doesRelativeDateFormatting = YES;
-        dateFormatter.dateStyle = NSDateFormatterMediumStyle;
-        dateFormatter.timeStyle = NSDateFormatterNoStyle;
+    if (fullFormatter == nil) {
+        fullFormatter = [NSDateFormatter new];
+        [fullFormatter setLocalizedDateFormatFromTemplate:@"EEEE"];
+    }
+    dowFormatter.timeZone = [NSTimeZone localTimeZone];
+    fullFormatter.timeZone = [NSTimeZone localTimeZone];
+
+    if ([self.nsCal isDateInToday:date]) {
+        NSString *dow = [dowFormatter stringFromDate:date];
+        return [NSString stringWithFormat:@"%@ (Today)", dow];
+    }
+    else if ([self.nsCal isDateInTomorrow:date]) {
+        NSString *dow = [dowFormatter stringFromDate:date];
+        return [NSString stringWithFormat:@"%@ (Tomorrow)", dow];
     }
     else {
-        dateFormatter.doesRelativeDateFormatting = NO;
-        [dateFormatter setLocalizedDateFormatFromTemplate:@"EEEE"];
+        return [fullFormatter stringFromDate:date];
     }
-    return [dateFormatter stringFromDate:date];
 }
 
 - (void)populateEventCell:(AgendaEventCell *)cell withInfo:(EventInfo *)info
