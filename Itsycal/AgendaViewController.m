@@ -189,7 +189,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
     // Invoked just before menu is to be displayed.
     // Show a context menu ONLY for non-group rows.
     [menu removeAllItems];
-    if (_tv.clickedRow < 0 || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
+    if (_tv.clickedRow < 0 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
         [self tableView:_tv isEmptyEventRow:_tv.clickedRow]) return;
     [menu addItemWithTitle:NSLocalizedString(@"Open Calendar", nil) action:@selector(showCalendarApp:) keyEquivalent:@""];
     [menu addItemWithTitle:NSLocalizedString(@"Copy", nil) action:@selector(copyEventToPasteboard:) keyEquivalent:@""];
@@ -205,7 +205,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)copyEventToPasteboard:(id)sender
 {
-    if (_tv.clickedRow < 0 || [self tableView:_tv isGroupRow:_tv.clickedRow]) return;
+    if (_tv.clickedRow < 0 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow]) return;
     static NSDateIntervalFormatter *intervalFormatter = nil;
     if (intervalFormatter == nil) {
         intervalFormatter = [NSDateIntervalFormatter new];
@@ -255,7 +255,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)showPopoverForRow:(NSInteger)row
 {
-    if (row == -1 || [self tableView:_tv isGroupRow:row] ||
+    if (row == -1 || row >= self.events.count || [self tableView:_tv isGroupRow:row] ||
         [self tableView:_tv isEmptyEventRow:row]) return;
 
     static dispatch_once_t onceToken;
@@ -294,7 +294,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)showPopover:(id)sender
 {
-    if (_tv.clickedRow == -1 || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
+    if (_tv.clickedRow == -1 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
         [self tableView:_tv isEmptyEventRow:_tv.clickedRow]) return;
 
     [self showPopoverForRow:_tv.clickedRow];
@@ -302,7 +302,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)showCalendarApp:(id)sender
 {
-    if (_tv.clickedRow == -1 || [self tableView:_tv isGroupRow:_tv.clickedRow]) return;
+    if (_tv.clickedRow == -1 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow]) return;
 
     // Work backwards from the clicked row (which is an EventInfo row)
     // to find the parent NSDate row. We do this instead of just getting
@@ -398,11 +398,13 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (BOOL)tableView:(NSTableView *)tableView isGroupRow:(NSInteger)row
 {
+    if (row < 0 || row >= self.events.count) return NO;
     return [self.events[row] isKindOfClass:[NSDate class]];
 }
 
 - (BOOL)tableView:(NSTableView *)tableView isEmptyEventRow:(NSInteger)row
 {
+    if (row < 0 || row >= self.events.count) return NO;
     id obj = self.events[row];
     return ([obj isKindOfClass:[EventInfo class]] &&
             ((EventInfo *)obj).event == nil);
@@ -457,7 +459,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
     } else if ([sender isKindOfClass:[NSMenuItem class]]) {
         row = [(NSMenuItem *)sender tag];
     }
-    if (row < 0) return;
+    if (row < 0 || row >= self.events.count) return;
     if (self.delegate && [self.delegate respondsToSelector:@selector(agendaWantsToDeleteEvent:)]) {
         EventInfo *info = self.events[row];
         [self.delegate agendaWantsToDeleteEvent:info.event];
@@ -597,6 +599,8 @@ static NSString *kEventCellIdentifier = @"EventCell";
         NSTextAttachment *cameraAttachment = [[NSTextAttachment alloc] init];
         NSImage *cameraImage = [NSImage imageNamed:@"video16"];
         cameraAttachment.image = cameraImage;
+        // Adjust bounds to vertically center the icon with the text
+        cameraAttachment.bounds = NSMakeRect(0, -3, cameraImage.size.width, cameraImage.size.height);
         
         // Add space before the camera icon
         [attributedTitle appendAttributedString:[[NSAttributedString alloc] initWithString:@" "]];
@@ -992,14 +996,25 @@ static NSString *kEventCellIdentifier = @"EventCell";
                                          yRadius:radius] fill];
         return;
     }
-    
+
+    // Draw an elegant rounded background for the event cell.
+    NSRect bgRect = NSInsetRect(self.bounds, 6, 2);
+    CGFloat bgRadius = 7.0;
+    NSColor *backgroundColor = [Theme.mainBackgroundColor colorWithAlphaComponent:0.95];
+    [backgroundColor set];
+    [[NSBezierPath bezierPathWithRoundedRect:bgRect xRadius:bgRadius yRadius:bgRadius] fill];
+
+    // Draw a clear bottom separator to define event boundaries.
+    NSColor *separatorColor = Theme.agendaDividerColor;
+    [separatorColor set];
+    NSRect sepRect = NSMakeRect(bgRect.origin.x, bgRect.origin.y, bgRect.size.width, 1);
+    NSRectFillUsingOperation(sepRect, NSCompositingOperationSourceOver);
+
     // Draw a line at the top of the cell if this is the first active event
     if (self.isFirstActiveEvent) {
         NSColor *lineColor = [NSColor colorWithCalibratedRed:0.0 green:0.5 blue:1.0 alpha:0.8];
         [lineColor set];
-        
-        // Draw the line across the full width of the cell
-        NSRect lineRect = NSMakeRect(8, NSHeight(self.bounds) - 1, NSWidth(self.bounds) - 16, 2);
+        NSRect lineRect = NSMakeRect(bgRect.origin.x, NSMaxY(bgRect) - 2, bgRect.size.width, 2);
         NSBezierPath *linePath = [NSBezierPath bezierPathWithRoundedRect:lineRect xRadius:1 yRadius:1];
         [linePath fill];
     }
@@ -1016,8 +1031,8 @@ static NSString *kEventCellIdentifier = @"EventCell";
     // Draw colored dot. Dot is elongated for all-day events.
     // Stroke for tentative and pending events, otherwise fill.
     CGFloat alpha = self.dim ? 0.5 : 1;
-    CGFloat x = 11;
-    CGFloat yOffset = SizePref.fontSize + 2;
+    CGFloat x = 12; // Moved dot further left to increase separation from title
+    CGFloat yOffset = SizePref.fontSize + 1; // Adjusted for better vertical alignment with text
     CGFloat dotWidthX = SizePref.agendaDotWidth;
     CGFloat dotWidthY = dotWidthX;
     CGFloat radius = dotWidthX / 2.0;

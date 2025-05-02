@@ -184,7 +184,8 @@
     _moCal.showWeeks = [defaults boolForKey:kShowWeeks];
     _moCal.doNotDrawOutlineAroundCurrentMonth = [defaults boolForKey:kDoNotDrawOutlineAroundCurrentMonth];
 
-    [self.itsycalWindow makeFirstResponder:_moCal];
+    // Don't make _moCal the first responder since it's not in the view hierarchy
+    [self.itsycalWindow makeFirstResponder:self.view];
 }
 
 #pragma mark -
@@ -869,13 +870,13 @@
 {
     return (ItsycalWindow *)self.view.window;
 }
-
 - (void)showItsycalWindow
 {
     [[NSApplication sharedApplication] unhideWithoutActivation];
     [self positionItsycalWindow];
     [self.itsycalWindow makeKeyAndOrderFront:self];
-    [self.itsycalWindow makeFirstResponder:_moCal];
+    [self.itsycalWindow makeFirstResponder:self.view];
+    _inactiveTime = 0;
     _inactiveTime = 0;
 }
 
@@ -940,7 +941,7 @@
     if (row == -1) {
         [_moCal unhighlightCells];
     }
-    else {
+    else if (row < _agendaVC.events.count) {
         EventInfo *info = _agendaVC.events[row];
         MoDate startDate = MakeDateWithNSDate(info.event.startDate, _nsCal);
         MoDate endDate   = MakeDateWithNSDate(info.event.endDate,   _nsCal);
