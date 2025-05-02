@@ -40,6 +40,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 @property (nonatomic, weak) EventInfo *eventInfo;
 @property (nonatomic) BOOL dim;
 @property (nonatomic) BOOL isFirstActiveEvent;
+@property (nonatomic) BOOL shouldDrawBottomDivider; // Added for event divider logic
 @end
 
 @interface AgendaPopoverVC : NSViewController
@@ -347,7 +348,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
 {
     NSView *v = nil;
     id obj = self.events[row];
-    
+
     if ([obj isKindOfClass:[NSDate class]]) {
         AgendaDateCell *cell = [_tv makeViewWithIdentifier:kDateCellIdentifier owner:self];
         if (cell == nil) cell = [AgendaDateCell new];
@@ -367,6 +368,16 @@ static NSString *kEventCellIdentifier = @"EventCell";
         AgendaEventCell *cell = [_tv makeViewWithIdentifier:kEventCellIdentifier owner:self];
         if (!cell) cell = [AgendaEventCell new];
         [self populateEventCell:cell withInfo:info];
+
+        // Set shouldDrawBottomDivider: only draw if next row is not a date header and not out of bounds
+        NSInteger nextRow = row + 1;
+        BOOL shouldDraw = NO;
+        if (nextRow < self.events.count) {
+            id nextObj = self.events[nextRow];
+            shouldDraw = ![nextObj isKindOfClass:[NSDate class]];
+        }
+        cell.shouldDrawBottomDivider = shouldDraw;
+
         v = cell;
     }
     return v;
@@ -857,8 +868,9 @@ static NSString *kEventCellIdentifier = @"EventCell";
     // Must be opaque so rows can scroll under it.
     [Theme.mainBackgroundColor set];
     NSRectFillUsingOperation(self.bounds, NSCompositingOperationSourceOver);
-    NSRect r = NSMakeRect(10, self.bounds.size.height - 4, self.bounds.size.width - 20, 1);
-    [Theme.agendaDividerColor set];
+    // Thicker, more distinct day divider
+    NSRect r = NSMakeRect(10, self.bounds.size.height - 5, self.bounds.size.width - 20, 3);
+    [[Theme.agendaDividerColor blendedColorWithFraction:0.5 ofColor:Theme.agendaDayTextColor] set];
     NSRectFillUsingOperation(r, NSCompositingOperationSourceOver);
 }
 
@@ -1013,11 +1025,13 @@ static NSString *kEventCellIdentifier = @"EventCell";
     [backgroundColor set];
     [[NSBezierPath bezierPathWithRoundedRect:bgRect xRadius:bgRadius yRadius:bgRadius] fill];
 
-    // Draw a clear bottom separator to define event boundaries.
-    NSColor *separatorColor = Theme.agendaDividerColor;
-    [separatorColor set];
-    NSRect sepRect = NSMakeRect(bgRect.origin.x, bgRect.origin.y, bgRect.size.width, 1);
-    NSRectFillUsingOperation(sepRect, NSCompositingOperationSourceOver);
+    // Draw a clear bottom separator to define event boundaries (match day divider insets & skip if flagged).
+    if (self.shouldDrawBottomDivider) {
+        NSColor *separatorColor = Theme.agendaDividerColor;
+        [separatorColor set];
+        NSRect sepRect = NSMakeRect(10, bgRect.origin.y, self.bounds.size.width - 20, 1);
+        NSRectFillUsingOperation(sepRect, NSCompositingOperationSourceOver);
+    }
 
     // Draw a line at the top of the cell if this is the first active event
     if (self.isFirstActiveEvent) {
