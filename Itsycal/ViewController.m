@@ -982,14 +982,20 @@
         [_moCal unhighlightCells];
     }
     else if (row < _agendaVC.events.count) {
-        EventInfo *info = _agendaVC.events[row];
-        MoDate startDate = MakeDateWithNSDate(info.event.startDate, _nsCal);
-        MoDate endDate   = MakeDateWithNSDate(info.event.endDate,   _nsCal);
-        // Fixup for endDates that are at midnight
-        if ([info.event.endDate compare:[_nsCal startOfDayForDate:info.event.endDate]] == NSOrderedSame) {
-            endDate = AddDaysToDate(-1, endDate);
+        id obj = _agendaVC.events[row];
+        // Only highlight for EventInfo objects, not date headers or collapsed markers
+        if ([obj isKindOfClass:[EventInfo class]]) {
+            EventInfo *info = obj;
+            MoDate startDate = MakeDateWithNSDate(info.event.startDate, _nsCal);
+            MoDate endDate   = MakeDateWithNSDate(info.event.endDate,   _nsCal);
+            // Fixup for endDates that are at midnight
+            if ([info.event.endDate compare:[_nsCal startOfDayForDate:info.event.endDate]] == NSOrderedSame) {
+                endDate = AddDaysToDate(-1, endDate);
+            }
+            [_moCal highlightCellsFromDate:startDate toDate:endDate withColor:info.event.calendar.color];
+        } else {
+            [_moCal unhighlightCells];
         }
-        [_moCal highlightCellsFromDate:startDate toDate:endDate withColor:info.event.calendar.color];
     }
 }
 
