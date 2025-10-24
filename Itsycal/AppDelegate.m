@@ -39,7 +39,8 @@
         kShowEventDots:        @(YES),
         kUseColoredDots:       @(YES),
         kThemePreference:      @0, // System=0, Light=1, Dark=2
-        kHideIcon:             @(NO)
+        kHideIcon:             @(NO),
+        @"TSMLanguageIndicatorEnabled": @(NO) // Suppress Text Services Manager warning
     }];
     
     // Constrain kShowEventDays to values 0...9 in (unlikely) case it is invalid.
