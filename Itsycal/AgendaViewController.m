@@ -14,9 +14,21 @@
 #import "Themer.h"
 #import "Sizer.h"
 
-static NSString *kColumnIdentifier    = @"Column";
-static NSString *kDateCellIdentifier  = @"DateCell";
-static NSString *kEventCellIdentifier = @"EventCell";
+static NSString *kColumnIdentifier            = @"Column";
+static NSString *kDateCellIdentifier          = @"DateCell";
+static NSString *kEventCellIdentifier         = @"EventCell";
+static NSString *kCollapsedPastCellIdentifier = @"CollapsedPastCell";
+
+// Marker class to represent collapsed past events
+@interface CollapsedPastEventsMarker : NSObject
+@property (nonatomic) NSInteger eventCount;
+@property (nonatomic, strong) NSDate *date;
+@property (nonatomic, strong) NSArray *hiddenEvents;
+@property (nonatomic) BOOL isExpanded; // YES = show "Hide", NO = show "Show"
+@end
+
+@implementation CollapsedPastEventsMarker
+@end
 
 @interface ThemedScroller : NSScroller
 @end
@@ -43,6 +55,12 @@ static NSString *kEventCellIdentifier = @"EventCell";
 @property (nonatomic) BOOL shouldDrawBottomDivider; // Added for event divider logic
 @end
 
+@interface AgendaCollapsedPastCell : NSView
+@property (nonatomic) NSTextField *summaryTextField;
+@property (nonatomic) NSTextField *iconTextField;
+@property (nonatomic, weak) CollapsedPastEventsMarker *marker;
+@end
+
 @interface AgendaPopoverVC : NSViewController
 @property (nonatomic, weak) NSCalendar *nsCal;
 @property (nonatomic) NSButton *btnDelete;
@@ -61,10 +79,21 @@ static NSString *kEventCellIdentifier = @"EventCell";
 @implementation AgendaViewController
 {
     NSPopover *_popover;
+    NSMutableSet *_datesWithCollapsedPastEvents; // Tracks which dates have collapsed past events
+    NSMutableSet *_datesUserHasToggled; // Tracks which dates the user has explicitly toggled
+    NSArray *_originalEvents; // Stores the original unprocessed events
 }
 
 - (void)loadView
 {
+    // Initialize collapsed past events tracking
+    if (!_datesWithCollapsedPastEvents) {
+        _datesWithCollapsedPastEvents = [NSMutableSet new];
+    }
+    if (!_datesUserHasToggled) {
+        _datesUserHasToggled = [NSMutableSet new];
+    }
+
     // View controller content view
     NSView *v = [NSView new];
 
@@ -170,6 +199,173 @@ static NSString *kEventCellIdentifier = @"EventCell";
     }
 }
 
+- (void)setEvents:(NSArray *)events
+{
+    // Save original unprocessed events
+    _originalEvents = events;
+
+    // Auto-collapse past events for today by default (only if user hasn't toggled it)
+    for (id obj in events) {
+        if ([obj isKindOfClass:[NSDate class]] && [self.nsCal isDateInToday:obj]) {
+            // Skip if user has explicitly toggled this date
+            if ([_datesUserHasToggled containsObject:obj]) {
+                continue;
+            }
+
+            // Check if there are any past events for today
+            NSInteger idx = [events indexOfObject:obj];
+            if (idx != NSNotFound && idx + 1 < events.count) {
+                // Look ahead to see if there are past events
+                BOOL hasPastEvents = NO;
+                for (NSInteger i = idx + 1; i < events.count; i++) {
+                    id nextObj = events[i];
+                    if ([nextObj isKindOfClass:[NSDate class]]) break; // Hit next date
+                    if ([nextObj isKindOfClass:[EventInfo class]]) {
+                        EventInfo *info = nextObj;
+                        if (!info.isStartDate && !info.isAllDay
+                            && [NSDate.date compare:info.event.endDate] == NSOrderedDescending) {
+                            hasPastEvents = YES;
+                            break;
+                        }
+                    }
+                }
+                // Auto-collapse if there are past events
+                if (hasPastEvents) {
+                    [_datesWithCollapsedPastEvents addObject:obj];
+                }
+            }
+        }
+    }
+
+    // Process events to group past events by date
+    NSMutableArray *processedEvents = [NSMutableArray new];
+    NSDate *currentDate = nil;
+    NSMutableArray *pastEventsForCurrentDate = [NSMutableArray new];
+
+    for (id obj in events) {
+        if ([obj isKindOfClass:[NSDate class]]) {
+            // We've hit a new date header
+            // First, handle any accumulated past events from the previous date
+            if (currentDate && pastEventsForCurrentDate.count > 0) {
+                // Check if this date should have collapsed past events
+                if ([_datesWithCollapsedPastEvents containsObject:currentDate]) {
+                    // Add collapse marker instead of individual past events
+                    CollapsedPastEventsMarker *marker = [CollapsedPastEventsMarker new];
+                    marker.eventCount = pastEventsForCurrentDate.count;
+                    marker.date = currentDate;
+                    marker.hiddenEvents = [pastEventsForCurrentDate copy];
+                    marker.isExpanded = NO;
+                    [processedEvents addObject:marker];
+                } else {
+                    // When expanded, add top marker, then events, then bottom marker
+                    CollapsedPastEventsMarker *topMarker = [CollapsedPastEventsMarker new];
+                    topMarker.eventCount = pastEventsForCurrentDate.count;
+                    topMarker.date = currentDate;
+                    topMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+                    topMarker.isExpanded = YES;
+                    [processedEvents addObject:topMarker];
+
+                    [processedEvents addObjectsFromArray:pastEventsForCurrentDate];
+
+                    CollapsedPastEventsMarker *bottomMarker = [CollapsedPastEventsMarker new];
+                    bottomMarker.eventCount = pastEventsForCurrentDate.count;
+                    bottomMarker.date = currentDate;
+                    bottomMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+                    bottomMarker.isExpanded = YES;
+                    [processedEvents addObject:bottomMarker];
+                }
+                [pastEventsForCurrentDate removeAllObjects];
+            }
+
+            // Add the date header
+            currentDate = obj;
+            [processedEvents addObject:obj];
+        }
+        else if ([obj isKindOfClass:[EventInfo class]]) {
+            EventInfo *info = obj;
+            // Check if this event is a past event (today and already ended)
+            BOOL isPastEvent = NO;
+            if (!info.isStartDate && !info.isAllDay && currentDate
+                && [self.nsCal isDateInToday:currentDate]
+                && [NSDate.date compare:info.event.endDate] == NSOrderedDescending) {
+                isPastEvent = YES;
+            }
+
+            if (isPastEvent) {
+                // Accumulate past events for potential collapsing
+                [pastEventsForCurrentDate addObject:obj];
+            } else {
+                // First, flush any accumulated past events
+                if (pastEventsForCurrentDate.count > 0) {
+                    if ([_datesWithCollapsedPastEvents containsObject:currentDate]) {
+                        CollapsedPastEventsMarker *marker = [CollapsedPastEventsMarker new];
+                        marker.eventCount = pastEventsForCurrentDate.count;
+                        marker.date = currentDate;
+                        marker.hiddenEvents = [pastEventsForCurrentDate copy];
+                        marker.isExpanded = NO;
+                        [processedEvents addObject:marker];
+                    } else {
+                        // When expanded, add top marker, then events, then bottom marker
+                        CollapsedPastEventsMarker *topMarker = [CollapsedPastEventsMarker new];
+                        topMarker.eventCount = pastEventsForCurrentDate.count;
+                        topMarker.date = currentDate;
+                        topMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+                        topMarker.isExpanded = YES;
+                        [processedEvents addObject:topMarker];
+
+                        [processedEvents addObjectsFromArray:pastEventsForCurrentDate];
+
+                        CollapsedPastEventsMarker *bottomMarker = [CollapsedPastEventsMarker new];
+                        bottomMarker.eventCount = pastEventsForCurrentDate.count;
+                        bottomMarker.date = currentDate;
+                        bottomMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+                        bottomMarker.isExpanded = YES;
+                        [processedEvents addObject:bottomMarker];
+                    }
+                    [pastEventsForCurrentDate removeAllObjects];
+                }
+                // Add current (non-past) event
+                [processedEvents addObject:obj];
+            }
+        }
+        else {
+            // Unknown type, just add it
+            [processedEvents addObject:obj];
+        }
+    }
+
+    // Handle any remaining past events
+    if (currentDate && pastEventsForCurrentDate.count > 0) {
+        if ([_datesWithCollapsedPastEvents containsObject:currentDate]) {
+            CollapsedPastEventsMarker *marker = [CollapsedPastEventsMarker new];
+            marker.eventCount = pastEventsForCurrentDate.count;
+            marker.date = currentDate;
+            marker.hiddenEvents = [pastEventsForCurrentDate copy];
+            marker.isExpanded = NO;
+            [processedEvents addObject:marker];
+        } else {
+            // When expanded, add top marker, then events, then bottom marker
+            CollapsedPastEventsMarker *topMarker = [CollapsedPastEventsMarker new];
+            topMarker.eventCount = pastEventsForCurrentDate.count;
+            topMarker.date = currentDate;
+            topMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+            topMarker.isExpanded = YES;
+            [processedEvents addObject:topMarker];
+
+            [processedEvents addObjectsFromArray:pastEventsForCurrentDate];
+
+            CollapsedPastEventsMarker *bottomMarker = [CollapsedPastEventsMarker new];
+            bottomMarker.eventCount = pastEventsForCurrentDate.count;
+            bottomMarker.date = currentDate;
+            bottomMarker.hiddenEvents = [pastEventsForCurrentDate copy];
+            bottomMarker.isExpanded = YES;
+            [processedEvents addObject:bottomMarker];
+        }
+    }
+
+    _events = [processedEvents copy];
+}
+
 - (void)reloadData
 {
     // Mark the first active event before reloading
@@ -191,7 +387,7 @@ static NSString *kEventCellIdentifier = @"EventCell";
     // Show a context menu ONLY for non-group rows.
     [menu removeAllItems];
     if (_tv.clickedRow < 0 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
-        [self tableView:_tv isEmptyEventRow:_tv.clickedRow]) return;
+        [self tableView:_tv isEmptyEventRow:_tv.clickedRow] || [self tableView:_tv isCollapsedPastRow:_tv.clickedRow]) return;
     [menu addItemWithTitle:NSLocalizedString(@"Open Calendar", nil) action:@selector(showCalendarApp:) keyEquivalent:@""];
     [menu addItemWithTitle:NSLocalizedString(@"Copy", nil) action:@selector(copyEventToPasteboard:) keyEquivalent:@""];
     EventInfo *info = self.events[_tv.clickedRow];
@@ -206,7 +402,8 @@ static NSString *kEventCellIdentifier = @"EventCell";
 
 - (void)copyEventToPasteboard:(id)sender
 {
-    if (_tv.clickedRow < 0 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow]) return;
+    if (_tv.clickedRow < 0 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
+        [self tableView:_tv isCollapsedPastRow:_tv.clickedRow]) return;
     static NSDateIntervalFormatter *intervalFormatter = nil;
     if (intervalFormatter == nil) {
         intervalFormatter = [NSDateIntervalFormatter new];
@@ -293,10 +490,36 @@ static NSString *kEventCellIdentifier = @"EventCell";
     [popoverVC.view.window makeFirstResponder:popoverVC.btnDelete];
 }
 
+- (void)toggleCollapsedPastEvents:(CollapsedPastEventsMarker *)marker
+{
+    // Mark that user has explicitly toggled this date
+    [_datesUserHasToggled addObject:marker.date];
+
+    // Toggle the collapse state for this date
+    if ([_datesWithCollapsedPastEvents containsObject:marker.date]) {
+        [_datesWithCollapsedPastEvents removeObject:marker.date];
+    } else {
+        [_datesWithCollapsedPastEvents addObject:marker.date];
+    }
+
+    // Re-process the original events with the new collapse state
+    if (_originalEvents) {
+        [self setEvents:_originalEvents];
+        [self reloadData];
+    }
+}
+
 - (void)showPopover:(id)sender
 {
     if (_tv.clickedRow == -1 || _tv.clickedRow >= self.events.count || [self tableView:_tv isGroupRow:_tv.clickedRow] ||
         [self tableView:_tv isEmptyEventRow:_tv.clickedRow]) return;
+
+    // Check if clicked on a collapsed past events row
+    id obj = self.events[_tv.clickedRow];
+    if ([obj isKindOfClass:[CollapsedPastEventsMarker class]]) {
+        [self toggleCollapsedPastEvents:(CollapsedPastEventsMarker *)obj];
+        return;
+    }
 
     [self showPopoverForRow:_tv.clickedRow];
 }
@@ -363,6 +586,21 @@ static NSString *kEventCellIdentifier = @"EventCell";
         }
         v = cell;
     }
+    else if ([obj isKindOfClass:[CollapsedPastEventsMarker class]]) {
+        CollapsedPastEventsMarker *marker = obj;
+        AgendaCollapsedPastCell *cell = [_tv makeViewWithIdentifier:kCollapsedPastCellIdentifier owner:self];
+        if (!cell) cell = [AgendaCollapsedPastCell new];
+        cell.marker = marker;
+        NSString *eventWord = (marker.eventCount == 1) ? @"event" : @"events";
+        if (marker.isExpanded) {
+            cell.summaryTextField.stringValue = [NSString stringWithFormat:@"Hide %ld past %@", (long)marker.eventCount, eventWord];
+            cell.iconTextField.stringValue = @"▲";
+        } else {
+            cell.summaryTextField.stringValue = [NSString stringWithFormat:@"%ld past %@", (long)marker.eventCount, eventWord];
+            cell.iconTextField.stringValue = @"▼";
+        }
+        v = cell;
+    }
     else {
         EventInfo *info = obj;
         AgendaEventCell *cell = [_tv makeViewWithIdentifier:kEventCellIdentifier owner:self];
@@ -419,6 +657,12 @@ static NSString *kEventCellIdentifier = @"EventCell";
     id obj = self.events[row];
     return ([obj isKindOfClass:[EventInfo class]] &&
             ((EventInfo *)obj).event == nil);
+}
+
+- (BOOL)tableView:(NSTableView *)tableView isCollapsedPastRow:(NSInteger)row
+{
+    if (row < 0 || row >= self.events.count) return NO;
+    return [self.events[row] isKindOfClass:[CollapsedPastEventsMarker class]];
 }
 
 - (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row
@@ -702,8 +946,9 @@ static NSString *kEventCellIdentifier = @"EventCell";
     
     // Loop through events to find the first active one
     for (NSInteger row = 0; row < [_tv numberOfRows]; row++) {
-        // Skip date header rows and empty rows
-        if ([self tableView:_tv isGroupRow:row] || [self tableView:_tv isEmptyEventRow:row]) {
+        // Skip date header rows, empty rows, and collapsed past event rows
+        if ([self tableView:_tv isGroupRow:row] || [self tableView:_tv isEmptyEventRow:row] ||
+            [self tableView:_tv isCollapsedPastRow:row]) {
             continue;
         }
         
@@ -1075,6 +1320,60 @@ static NSString *kEventCellIdentifier = @"EventCell";
     } else {
         [p fill];
     }
+}
+
+@end
+
+#pragma mark -
+#pragma mark AgendaCollapsedPastCell
+
+// =========================================================================
+// AgendaCollapsedPastCell
+// =========================================================================
+
+@implementation AgendaCollapsedPastCell
+
+- (instancetype)init
+{
+    if (!(self = [super init])) return nil;
+
+    self.identifier = kCollapsedPastCellIdentifier;
+
+    // Summary text (e.g., "3 past events")
+    _summaryTextField = [NSTextField labelWithString:@""];
+    _summaryTextField.font = [NSFont systemFontOfSize:SizePref.fontSize];
+    _summaryTextField.textColor = NSColor.secondaryLabelColor;
+    _summaryTextField.translatesAutoresizingMaskIntoConstraints = NO;
+
+    // Icon (▼ or ▶)
+    _iconTextField = [NSTextField labelWithString:@"▼"];
+    _iconTextField.font = [NSFont systemFontOfSize:SizePref.fontSize - 2];
+    _iconTextField.textColor = NSColor.tertiaryLabelColor;
+    _iconTextField.translatesAutoresizingMaskIntoConstraints = NO;
+
+    [self addSubview:_summaryTextField];
+    [self addSubview:_iconTextField];
+
+    // Layout constraints
+    [NSLayoutConstraint activateConstraints:@[
+        [_iconTextField.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:25],
+        [_iconTextField.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        [_summaryTextField.leadingAnchor constraintEqualToAnchor:_iconTextField.trailingAnchor constant:6],
+        [_summaryTextField.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        [_summaryTextField.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor constant:-10]
+    ]];
+
+    return self;
+}
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+    // Draw subtle background for collapsed past events row
+    NSRect bgRect = NSInsetRect(self.bounds, 6, 2);
+    CGFloat bgRadius = 5.0;
+    NSColor *backgroundColor = [[Theme.mainBackgroundColor blendedColorWithFraction:0.05 ofColor:NSColor.secondaryLabelColor] colorWithAlphaComponent:0.3];
+    [backgroundColor set];
+    [[NSBezierPath bezierPathWithRoundedRect:bgRect xRadius:bgRadius yRadius:bgRadius] fill];
 }
 
 @end
