@@ -635,6 +635,46 @@
         }
         _statusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:buttonText attributes:@{NSBaselineOffsetAttributeName: @(baselineOffset)}];
     }
+    else {
+        _statusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:@""];
+    }
+
+    // Add next event title if enabled
+    if ([defaults boolForKey:kShowNextEventTitle]) {
+        EventInfo *nextEvent = [self nextEvent];
+        if (nextEvent) {
+            NSString *eventTitle = [self formatEventTitle:nextEvent];
+            if (eventTitle) {
+                // Get current title and append event
+                NSString *currentTitle = _statusItem.button.attributedTitle.string;
+                NSString *separator = (currentTitle.length > 0) ? @"  " : @" ";
+                NSString *fullTitle = [currentTitle stringByAppendingFormat:@"%@%@", separator, eventTitle];
+
+                // Apply same baseline offset as clock format
+                CGFloat scaleFactor = NSScreen.mainScreen.backingScaleFactor ?: 2.0;
+                CGFloat baselineOffset = -1.0 / scaleFactor;
+                if (@available(macOS 10.15, *)) {
+                    baselineOffset = 0.5;
+                }
+                if (@available(macOS 11, *)) {
+                    baselineOffset = 0;
+                }
+                if ([defaults objectForKey:kBaselineOffset]) {
+                    baselineOffset = [defaults floatForKey:kBaselineOffset];
+                    baselineOffset = MIN(2.0, MAX(-2.0, baselineOffset));
+                }
+
+                _statusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:fullTitle attributes:@{NSBaselineOffsetAttributeName: @(baselineOffset)}];
+                accessibilityTitle = [accessibilityTitle stringByAppendingFormat:@", %@", eventTitle];
+
+                // Update image position to show both icon and title
+                if (!hideIcon) {
+                    _statusItem.button.imagePosition = NSImageLeft;
+                }
+            }
+        }
+    }
+
     _statusItem.button.accessibilityTitle = accessibilityTitle;
     [self adjustStatusItemWidthIfNecessary];
 }
@@ -1102,6 +1142,89 @@
     return datesAndEvents;
 }
 
+- (EventInfo *)nextEvent
+{
+    NSDate *now = [NSDate date];
+    MoDate today = [self todayDate];
+    EventInfo *todaysAllDayEvent = nil;
+
+    // Search for next event in the next 7 days
+    for (NSInteger i = 0; i < 7; i++) {
+        MoDate date = AddDaysToDate(i, today);
+        NSDate *nsDate = MakeNSDateWithDate(date, _nsCal);
+        NSArray *events = _filteredEventsForDate[nsDate];
+
+        if (events != nil) {
+            for (EventInfo *info in events) {
+                if (info.event == nil) continue;
+
+                // For all-day events, save today's event but don't return yet
+                if (info.isAllDay) {
+                    if (i == 0 && todaysAllDayEvent == nil) {
+                        todaysAllDayEvent = info;
+                    }
+                    continue;
+                }
+
+                // For timed events, check if it hasn't ended yet
+                if ([info.event.endDate compare:now] == NSOrderedDescending) {
+                    // If this is today and we found a timed event, prioritize it
+                    return info;
+                }
+            }
+
+            // If we just finished checking today and found no timed events,
+            // but we have an all-day event, return it
+            if (i == 0 && todaysAllDayEvent != nil) {
+                return todaysAllDayEvent;
+            }
+        }
+    }
+
+    return nil;
+}
+
+- (NSString *)formatEventTitle:(EventInfo *)eventInfo
+{
+    if (eventInfo == nil || eventInfo.event == nil) {
+        return nil;
+    }
+
+    NSDate *now = [NSDate date];
+    NSString *title = eventInfo.event.title;
+    NSString *prefix = @"";
+
+    // Determine if event is happening now or upcoming
+    BOOL isNow = ([eventInfo.event.startDate compare:now] != NSOrderedDescending &&
+                  [eventInfo.event.endDate compare:now] == NSOrderedDescending);
+
+    if (isNow) {
+        prefix = @"[Now] ";
+    }
+    else if (!eventInfo.isAllDay) {
+        // Show start time for upcoming timed events
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.dateFormat = @"h:mm a";
+        NSString *timeStr = [formatter stringFromDate:eventInfo.event.startDate];
+        prefix = [NSString stringWithFormat:@"%@ • ", timeStr];
+    }
+
+    // Combine prefix and title
+    NSString *fullText = [NSString stringWithFormat:@"%@%@", prefix, title];
+
+    // Truncate if needed
+    NSInteger maxLength = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxEventTitleLength];
+    if (maxLength <= 0) {
+        maxLength = 30; // Default max length
+    }
+
+    if (fullText.length > maxLength) {
+        fullText = [[fullText substringToIndex:maxLength - 1] stringByAppendingString:@"…"];
+    }
+
+    return fullText;
+}
+
 #pragma mark -
 #pragma mark EventCenterDelegate
 
@@ -1111,6 +1234,7 @@
     _filteredEventsForDate = [_ec filteredEventsForDate];
     [_moCal reloadData];
     [self updateAgenda];
+    [self updateMenubarIcon];
 }
 
 - (MoDate)fetchStartDate
@@ -1254,6 +1378,7 @@
     
     // Check if past events should be dimmed each minute.
     // Also check if we should show the meeting indicator.
+    // Also update menu bar to refresh next event title.
     static NSTimeInterval dimEventsTime = 0;
     NSTimeInterval currentTime = MonotonicClockTime();
     NSTimeInterval elapsedTime = currentTime - dimEventsTime;
@@ -1261,6 +1386,7 @@
         [_agendaVC dimEventsIfNecessary];
         dimEventsTime = currentTime;
         [self showMeetingIndicatorIfNecessary];
+        [self updateMenubarIcon];
     }
     // Reset calendar to today after 10 minutes of inactivity.
     elapsedTime = currentTime - _inactiveTime;
@@ -1384,7 +1510,7 @@
     }];
 
     // Observe NSUserDefaults for preference changes
-    for (NSString *keyPath in @[kShowEventDays, kMenuBarIconType, kShowMonthInIcon, kShowDayOfWeekInIcon, kShowDaysWithNoEventsInAgenda, kShowMeetingIndicator, kHideIcon, kBaselineOffset, kClockFormat]) {
+    for (NSString *keyPath in @[kShowEventDays, kMenuBarIconType, kShowMonthInIcon, kShowDayOfWeekInIcon, kShowDaysWithNoEventsInAgenda, kShowMeetingIndicator, kHideIcon, kBaselineOffset, kClockFormat, kShowNextEventTitle, kMaxEventTitleLength]) {
         [[NSUserDefaults standardUserDefaults] addObserver:self forKeyPath:keyPath options:NSKeyValueObservingOptionNew context:NULL];
     }
 }
@@ -1403,7 +1529,9 @@
              [keyPath isEqualToString:kShowDayOfWeekInIcon] ||
              [keyPath isEqualToString:kShowMeetingIndicator] ||
              [keyPath isEqualToString:kHideIcon] ||
-             [keyPath isEqualToString:kBaselineOffset]) {
+             [keyPath isEqualToString:kBaselineOffset] ||
+             [keyPath isEqualToString:kShowNextEventTitle] ||
+             [keyPath isEqualToString:kMaxEventTitleLength]) {
         [self updateMenubarIcon];
     }
     else if ([keyPath isEqualToString:kClockFormat]) {
